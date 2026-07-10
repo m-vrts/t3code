@@ -199,6 +199,21 @@ export const CursorIcon: Icon = ({ className, ...props }) => (
   </svg>
 );
 
+export const PiIcon: Icon = ({ className, ...props }) => (
+  <svg
+    {...props}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    strokeWidth="2.25"
+    className={className}
+  >
+    <path d="M4 7h16M8 7v9.5A2.5 2.5 0 0 1 5.5 19M16 7v12" />
+  </svg>
+);
+
 export const GrokIcon: Icon = ({ className, ...props }) => (
   <svg
     {...props}
