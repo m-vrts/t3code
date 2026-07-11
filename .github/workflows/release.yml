@@ -123,6 +123,46 @@ jobs:
             --current-tag "${{ steps.release_meta.outputs.tag }}" \
             --github-output
 
+  release_client_config:
+    name: Prepare optional release client config
+    needs: [preflight]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Write optional relay client tracing config
+        shell: bash
+        env:
+          T3CODE_RELAY_CLIENT_OTLP_TRACES_URL: ${{ vars.T3CODE_RELAY_CLIENT_OTLP_TRACES_URL }}
+          T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET: ${{ vars.T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET }}
+          T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN: ${{ secrets.T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN }}
+        run: |
+          set -euo pipefail
+          config_path="$RUNNER_TEMP/relay-client-tracing.env"
+          : > "$config_path"
+
+          for name in \
+            T3CODE_RELAY_CLIENT_OTLP_TRACES_URL \
+            T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET \
+            T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN; do
+            value="${!name:-}"
+            if [[ -n "$value" ]]; then
+              printf '%s=%s\n' "$name" "$value" >> "$config_path"
+            fi
+          done
+
+          # A fork with a deployed relay can replace this step with the relay
+          # state reader and keep the same artifact contract:
+          # --github-env-file "$RUNNER_TEMP/relay-client-tracing.env"
+
+      - name: Upload optional release client config
+        uses: actions/upload-artifact@v7
+        with:
+          name: relay-client-tracing-config
+          path: ${{ runner.temp }}/relay-client-tracing.env
+          if-no-files-found: error
+          retention-days: 1
+
   # node-pty publishes no Linux prebuilt and the WSL backend runs under the
   # distro's own (Linux) Node, which can't load the Windows/Electron binary. We
   # build the Linux pty.node here, on Linux, and hand it to the Windows packaging
@@ -177,8 +217,8 @@ jobs:
     # A failed Linux prebuild should not skip the macOS/Linux builds.
     # `!cancelled()` (not `!failure()`) lets the matrix run even when the
     # prebuild fails; the Windows-only download step then fails that platform.
-    needs: [preflight, build_wsl_node_pty]
-    if: ${{ !cancelled() && needs.preflight.result == 'success' }}
+    needs: [preflight, release_client_config, build_wsl_node_pty]
+    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.release_client_config.result == 'success' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
@@ -223,6 +263,22 @@ jobs:
           node-version-file: package.json
           cache: true
           run-install: true
+
+      - name: Download optional release client config
+        uses: actions/download-artifact@v8
+        with:
+          name: relay-client-tracing-config
+          path: ${{ runner.temp }}/relay-client-tracing
+
+      - name: Load optional release client config
+        shell: bash
+        run: |
+          config_path="$RUNNER_TEMP/relay-client-tracing/relay-client-tracing.env"
+          tracing_token="$(sed -n 's/^T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN=//p' "$config_path")"
+          if [[ -n "$tracing_token" ]]; then
+            echo "::add-mask::$tracing_token"
+          fi
+          cat "$config_path" >> "$GITHUB_ENV"
 
       - name: Align package versions to release version
         run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
@@ -457,8 +513,8 @@ jobs:
 
   build_cli:
     name: Build installable CLI tarball
-    needs: [preflight]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
+    needs: [preflight, release_client_config]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release_client_config.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -476,6 +532,22 @@ jobs:
             args:
               - --filter=t3...
               - --filter=@t3tools/web...
+
+      - name: Download optional release client config
+        uses: actions/download-artifact@v8
+        with:
+          name: relay-client-tracing-config
+          path: ${{ runner.temp }}/relay-client-tracing
+
+      - name: Load optional release client config
+        shell: bash
+        run: |
+          config_path="$RUNNER_TEMP/relay-client-tracing/relay-client-tracing.env"
+          tracing_token="$(sed -n 's/^T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN=//p' "$config_path")"
+          if [[ -n "$tracing_token" ]]; then
+            echo "::add-mask::$tracing_token"
+          fi
+          cat "$config_path" >> "$GITHUB_ENV"
 
       - name: Align package versions to release version
         run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
